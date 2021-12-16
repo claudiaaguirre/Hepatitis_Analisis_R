@@ -1,1 +1,1 @@
-# Hepatitis_Analisis_R
+Preprocesamiento de datos, Análisis de datos  (detección de posibles outliers, análisis de componentes principales), Aprendizaje supervisado (Análisis de discriminante lineal -LDA-, Análisis de discriminante cuadrático -QDA-, análisis de discriminante regularizado -RDA-, Máquinas de soporte vectorial -SVM-), Aprendizaje no supervisado (Métodos jerárquicos y no jerárquicos)
