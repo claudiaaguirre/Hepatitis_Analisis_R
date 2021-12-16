@@ -1,0 +1,523 @@
+---
+title: "Trabajo Práctico de Análisis Inteligente de Datos (AID)"
+author: "Claudia Roxana Aguirre"
+date: "10 de Agosto, 2021"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#------------------------------------------------------------------------
+# Se levantan los datos
+#------------------------------------------------------------------------
+```{r}
+df = read.csv("hepatitis.csv") 
+pie(table(df$Category))
+```
+#------------------------------------------------------------------------
+# Análisis univariado de outliers
+#------------------------------------------------------------------------
+```{r}
+df_graf = df[complete.cases(df),]
+boxplot(df_graf$Age, xlab = "Age")
+boxplot(df_graf$ALB, xlab = "ALB")
+boxplot(df_graf$ALP, xlab = "ALP")
+boxplot(df_graf$ALT, xlab = "ALT")
+boxplot(df_graf$AST, xlab = "AST")
+boxplot(df_graf$BIL, xlab = "BIL")
+boxplot(df_graf$CHE, xlab = "CHE")
+boxplot(df_graf$CHOL, xlab = "CHOL")
+boxplot(df_graf$CREA, xlab = "CREA")
+boxplot(df_graf$GGT, xlab = "GGT")
+boxplot(df_graf$PROT, xlab = "PROT")
+```
+#------------------------------------------------------------------------
+# Preprocesamiento de los datos
+#------------------------------------------------------------------------
+```{r}
+# Se obtienen los registros completos
+nrow(df)
+df_compl = df[complete.cases(df),]
+nrow(df_compl)
+
+#Me guardo las subcategorías
+df_compl$Subcat = df_compl$Category
+# Se obtienen 2 grupos de pertenencia: sanos y no sanos 
+df_compl[df_compl$Category == "0=Blood Donor",]$Category = "sano"
+df_compl[df_compl$Category != "sano",]$Category = "no_sano"
+df_compl$Category = as.factor(df_compl$Category)
+
+#Convesión de variable sexo en factor
+df_compl$Sex = as.factor(df_compl$Sex)
+
+# Se reduce el tamaño de la clase mayoritaria (sanos)
+set.seed(621983)
+#Sano
+dt_may = sort(sample(nrow(df_compl[df_compl$Category == "sano",]), nrow(df_compl[df_compl$Category == "sano",])*.6)) #315 registros
+df_compl_sano = df_compl[dt_may,]
+
+#No sano
+df_compl_no_sano = df_compl[df_compl$Category != "sano",]
+nrow(df_compl_sano)
+nrow(df_compl_no_sano)
+```
+
+```{r}
+#Se reordenan las columnas
+df_compl_sano = df_compl_sano[, c(3,5:14,2,15,4)]
+df_compl_no_sano = df_compl_no_sano[, c(3,5:14,2,15,4)]
+#names(df_compl_sano)
+#names(df_compl_no_sano)
+```
+#------------------------------------------------------------------------
+# Se divide el set de datos en Training y Test 
+# (respetando las proporciones de las clases "sano" y "no_sano")
+#------------------------------------------------------------------------
+```{r}
+#Sano:
+set.seed(621983)
+dt_a = sort(sample(nrow(df_compl_sano), nrow(df_compl_sano)*.7))
+df_sano_train = df_compl_sano[dt_a,]
+df_sano_test = df_compl_sano[-dt_a,]
+#No sano:
+set.seed(621983)
+dt_b = sort(sample(nrow(df_compl_no_sano), nrow(df_compl_no_sano)*.7))
+df_no_sano_train = df_compl_no_sano[dt_b,]
+df_no_sano_test = df_compl_no_sano[-dt_b,]
+#Union de los datasets 
+df_final_train_sin_esc = rbind(df_sano_train,df_no_sano_train)
+df_final_test_sin_esc = rbind(df_sano_test, df_no_sano_test)
+df_final_sin_esc = rbind(df_final_train_sin_esc, df_final_test_sin_esc)
+```
+#------------------------------------------------------------------------
+#Se escalan los datos
+#------------------------------------------------------------------------
+```{r}
+df_final_train =  as.data.frame(scale(df_final_train_sin_esc[,1:11]))
+df_final_train$Sex = df_final_train_sin_esc$Sex
+df_final_train$Category  = df_final_train_sin_esc$Category
+df_final_train$Subcat = df_final_train_sin_esc$Subcat
+
+df_final_test =  as.data.frame(scale(df_final_test_sin_esc[,1:11]))
+df_final_test$Sex = df_final_test_sin_esc$Sex
+df_final_test$Category  = df_final_test_sin_esc$Category
+df_final_test$Subcat = df_final_test_sin_esc$Subcat
+
+df_final =  as.data.frame(scale(df_final_sin_esc[,1:11]))
+df_final$Sex = df_final_sin_esc$Sex
+df_final$Category  = df_final_sin_esc$Category
+df_final$Subcat = df_final_sin_esc$Subcat
+
+#Se chequea la distribución de clases entre training, test y el dataset completo.
+barplot(table(df_final_train$Category))
+barplot(table(df_final_test$Category))
+barplot(table(df_final$Category))
+```
+#------------------------------------------------------------------------
+# Se buscan outliers (Aplicando Mahalanobis)
+# Basado en el libro de la materia (Pág. 65)
+#------------------------------------------------------------------------
+```{r}
+busqueda_outliers_multi = function(df_out)
+{
+  cov1 = MASS::cov.rob(df_out[,c(1:11)], method = "mcd", nsamp = "best") #Calcula MCD
+  cov2 = MASS::cov.rob(df_out[,c(1:11)], method = "mve", nsamp = "best") #Calcula MVE
+ 
+  for (i in 1:nrow(df_out)) {
+    df_out[i,"mcd"] = mahalanobis(df_out[i,c(1:11)], cov1$center, cov1$cov, inverted = FALSE)
+    df_out[i,"mve"]  = mahalanobis(df_out[i,c(1:11)], cov2$center, cov2$cov, inverted = FALSE)
+  }
+  #Se comparan las similitudes entre las diferentes salidas
+  print(head(df_out[order(df_out$mcd,decreasing = TRUE),c("mcd","mve","Category")],10))
+  print(head(df_out[order(df_out$mve,decreasing = TRUE),c("mcd","mve","Category")],10))
+}
+```
+#------------------------------------------------------------------------
+# Chequeo de outliers en el set de datos completo
+#------------------------------------------------------------------------
+```{r}
+df_final_out = df_final
+df_sano_out = df_final_out[df_final_out$Category == "sano",] 
+df_no_sano_out = df_final_out[df_final_out$Category == "no_sano",] 
+
+busqueda_outliers_multi(df_final_out)
+```
+```{r}
+df_final_sin_esc[c("559","611","592","596","610","594","589","560","603","599"),]
+```
+#------------------------------------------------------------------------
+# ACP sobre variables numericas para 2 clases
+#------------------------------------------------------------------------
+```{r}
+library(ggplot2) 
+library(ggrepel)
+library(devtools)
+library(ggbiplot)
+
+datos_para_acp = df_final[1:11]
+#No Robusto
+datos_para_acp.pc = prcomp(datos_para_acp,scale = FALSE)
+
+ggbiplot(datos_para_acp.pc, obs.scale=2 ,var.scale=2,alpha=0)
+ggbiplot(datos_para_acp.pc, obs.scale=2 ,var.scale=2,alpha=0.5,groups=factor(df_final$Category)) +
+  scale_color_manual(name="Categorias", values=c("red","green"),labels=c("no sano","sano")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+#Robusto
+datos_para_acp.pc_r = princomp(datos_para_acp,cor=TRUE, covmat=MASS::cov.mcd(datos_para_acp))
+
+ggbiplot(datos_para_acp.pc_r, obs.scale=2 ,var.scale=2,alpha=0)
+ggbiplot(datos_para_acp.pc_r, obs.scale=2 ,var.scale=2,alpha=0.5,groups=factor(df_final$Category)) +
+  scale_color_manual(name="Categorias", values=c("red","green"),labels=c("no sano","sano")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+```
+```{r}
+summary(datos_para_acp.pc)
+```
+```{r}
+summary(datos_para_acp.pc_r)
+```
+#------------------------------------------------------------------------
+# Aprendizaje Supervizado 
+#------------------------------------------------------------------------
+```{r}
+library(caret)
+
+mostrar_metricas_clasificacion = function(titulo,confusion_mtx){
+  matriz = confusion_mtx$table
+  print(matriz)
+  acc = (matriz[1,1] + matriz[2,2]) / sum(matriz)
+  sprintf(fmt = "%s :  Accuracy: %f\n", titulo, acc) %>% cat()
+  #Recall = TP / (TP + FN)
+  recall_cl_no_sano = matriz[1,1] / (matriz[1,1] + matriz[2,1])
+  sprintf(fmt = "Recall ClaseNOSano: %f  ", recall_cl_no_sano) %>% cat()
+  #Precision = TP / (TP + FP)
+  precision_cl_no_sano =  matriz[1,1] / (matriz[1,1] + matriz[1,2])
+  sprintf(fmt = "Precision ClaseNOSano: %f\n", precision_cl_no_sano) %>% cat()
+  recall_cl_si_sano = matriz[2,2] / (matriz[2,2] + matriz[1,2])
+  sprintf(fmt = "Recall ClaseSano: %f  ", recall_cl_si_sano) %>% cat()
+  precision_cl_si_sano =  matriz[2,2] / (matriz[2,2] + matriz[2,1])
+  sprintf(fmt = "Precision ClaseSano: %f\n", precision_cl_si_sano) %>% cat()
+}
+```
+#------------------------------------------------------------------------
+#Chequeo de supuesto de normalidad multivariada:
+#------------------------------------------------------------------------
+```{r}
+library(mvnormtest)
+mshapiro.test(t(df_final[,1:11]))
+```
+No se cumple el supuesto de normalidad.
+#------------------------------------------------------------------------
+# Chequeo de supuesto de homocedasticidad (Test M de Box ): 
+# Analizamos igualdad de matrices de varianzas y covarianzas
+#------------------------------------------------------------------------
+```{r}
+library(biotools)
+biotools::boxM(data = df_final[,c(1:11)], grouping = df_final$Category)
+```
+El supuesto de homocedasticidad tampoco se cumple, de todas formas continuamos.
+#------------------------------------------------------------------------
+#Test de Hotelling: comparación de vectores medios
+# No cumple los supuestos necesarios para aplicar el test
+#------------------------------------------------------------------------
+```{r}
+HotellingsT2Test(as.matrix(df_final[,1:11]) ~ Category, data =df_final)
+```
+#------------------------------------------------------------------------
+# LDA 
+#------------------------------------------------------------------------
+```{r echo=TRUE}
+library(MASS)
+
+modelo=NULL
+pred_tr=NULL
+pred_te=NULL
+
+formula_regr = formula(Category ~ Age + ALB + ALP + ALT + AST + BIL + CHE + CHOL + CREA + GGT + PROT )
+
+modelo$lda <- lda(formula_regr,df_final_train)
+pred_tr$lda <- predict(modelo$lda,df_final_train)
+pred_te$lda <- predict(modelo$lda,df_final_test)
+
+confusion_lda_tr = confusionMatrix(df_final_train$Category, pred_tr$lda$class)
+mostrar_metricas_clasificacion("Training LDA",confusion_lda_tr)
+
+confusion_lda_te = confusionMatrix(df_final_test$Category, pred_te$lda$class)
+mostrar_metricas_clasificacion("Testing LDA",confusion_lda_te)
+```
+#------------------------------------------------------------------------
+# QDA 
+#------------------------------------------------------------------------
+# (Cuando el supuesto de homocedasticidad no se puede sostener, una opción es usar QDA)
+```{r}
+#Aplicamos el análisis discriminante cuadrático, a pesar de saber que no se satisface el supuesto de normalidad. Aún en este caso nos interesa ver cómo clasifica el método.
+
+modelo$qda <- qda(formula_regr,df_final_train)
+pred_tr$qda <- predict(modelo$qda,df_final_train)
+pred_te$qda <- predict(modelo$qda,df_final_test)
+
+confusion_qda_tr = confusionMatrix(df_final_train$Category, pred_tr$qda$class)
+mostrar_metricas_clasificacion("Training QDA",confusion_qda_tr)
+
+confusion_qda_te = confusionMatrix(df_final_test$Category, pred_te$qda$class)
+mostrar_metricas_clasificacion("Test QDA",confusion_qda_te)
+
+```
+#-------------------
+# ROBUSTO
+# rda:  regularized discriminant analysis: Builds a classification rule using regularized group covariance matrices that are supposed to be more robust against multicollinearity in the data.
+#-------------------
+```{r echo=TRUE}
+library(klaR)
+
+modelo$rda <- rda(formula_regr ,df_final_train)
+                  #gamma=0,lambda=1)
+#gamma 0 y lambda 0 -->qda
+#gamma 0 y lambda 1 -->lda
+#si se omiten --> los optimiza
+round(modelo$rda$regularization,2)
+
+pred_tr$rda <- predict(modelo$rda,df_final_train)
+pred_te$rda <- predict(modelo$rda,df_final_test)
+
+confusion_rda_tr = confusionMatrix(df_final_train$Category, pred_tr$rda$class)
+mostrar_metricas_clasificacion("Training Robusto",confusion_rda_tr)
+
+confusion_rda_te = confusionMatrix(df_final_test$Category, pred_te$rda$class)
+mostrar_metricas_clasificacion("Testing Robusto",confusion_rda_te)
+```
+#-------------------
+# SVM
+#-------------------
+```{r echo=TRUE}
+#Modelo support vector machine svm
+library(e1071)
+
+# "polynomial": OK
+
+modelo_svm = svm(formula_regr,data = df_final_train,kernel="polynomial")
+pred_tr$svm = predict(modelo_svm, df_final_train)
+pred_te$svm = predict(modelo_svm, df_final_test)
+
+confusion_svm_tr = confusionMatrix(df_final_train$Category, pred_tr$svm)
+mostrar_metricas_clasificacion("Training SVM",confusion_svm_tr)
+print("")
+confusion_svm_te = confusionMatrix(df_final_test$Category, pred_te$svm)
+mostrar_metricas_clasificacion("Testing SVM",confusion_svm_te)
+```
+#------------------------------------------------------------------------
+# Aprendizaje No Supervizado
+#------------------------------------------------------------------------
+#------------------------------------------------------------------------
+# Análisis de la cantidad de clusters utilizando silhouette
+#------------------------------------------------------------------------
+```{r}
+library(pracma)
+metrica = function(datA_esc,kmax,f) {
+  
+  sil = array()
+  sse = array()
+  
+  datA_dist= dist(datA_esc,method = "euclidean", diag = FALSE, upper = FALSE, p = 2)
+  for ( i in  2:kmax) {
+    if (strcmp(f,"kmeans")==TRUE) {   #centroide: tipico kmeans
+      CL  = kmeans(datA_esc,centers=i,nstart=50,iter.max = kmax)
+      sse[i]  = CL$tot.withinss 
+      CL_sil = silhouette(CL$cluster, datA_dist)
+      sil[i]  = summary(CL_sil)$avg.width
+        }
+    if (strcmp(f,"pam")==TRUE){       #medoide: ste metodo tarda muchisimo 
+      CL = pam(x=datA_esc, k=i, diss = F, metric = "euclidean")
+      sse[i]  = CL$objective[1] 
+      sil[i]  = CL$silinfo$avg.width
+      }
+  }
+  sse
+  sil
+  return(data.frame(sse,sil))
+}
+```
+
+```{r echo=TRUE}
+
+datos_no_super = df_final
+kmax = 10
+#2 opciones de escalamiento
+  set.seed(2)
+  m1   = metrica(datos_no_super[,1:11],kmax,"kmeans")  #tipica con estimadores de la normal
+  # se define funcion de escalamiento disferente de la tipica normal.
+  #esc01 <- function(x) { (x - min(x)) / (max(x) - min(x))} 
+  #m1   = metrica(apply(datos_para_cluster,2,esc01),kmax,"kmeans") #definida en la funcion esc01
+
+par(mfrow=c(2,1))
+plot(2:kmax, m1$sil[2:kmax],col=1,type="b", pch = 19, frame = FALSE, 
+	 xlab="Number of clusters K",
+	 ylab="sil") 
+
+#par(mfrow=c(1,1))
+#grid()
+# los puntos 2 y 3 son interesantes, logrando cohesion y menos interferenca entre clusters de manera global.
+```
+#------------------------------------------------------------------------
+# Método no jerárquico
+#------------------------------------------------------------------------
+```{r echo=TRUE}
+library(cluster)
+
+cantidad_clusters=2
+CL  = kmeans(datos_no_super[,1:11],cantidad_clusters)
+datos_no_super$kmeans2 = CL$cluster
+```
+
+```{r echo=TRUE}
+
+datos.pc = prcomp(datos_no_super[,1:11],scale = FALSE)
+
+#conviene en un biplot ya que tengo las flechas de las variables originales
+ggbiplot(datos.pc, obs.scale=2 ,var.scale=2,alpha=0)
+ggbiplot(datos.pc, obs.scale=2 ,var.scale=2, alpha=0.5,groups = as.factor(datos_no_super$kmeans2) ) +
+  scale_color_manual(name="Cluster kmeans", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+
+#Criterio de validación externo: compara contra el biplot robusto de sanos/no sanos
+ggbiplot(datos_para_acp.pc_r, obs.scale=2 ,var.scale=2,alpha=0)
+ggbiplot(datos_para_acp.pc_r, obs.scale=2 ,var.scale=2,alpha=0.5,groups=factor(df_final$Category)) +
+  scale_color_manual(name="Categorias", values=c("red","green"),labels=c("no donar","donar")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+```
+
+```{r echo=TRUE}
+cantidad_clusters=3
+CL  = kmeans(datos_no_super[,1:11],cantidad_clusters)
+datos_no_super$kmeans3 = CL$cluster
+```
+
+```{r echo=TRUE}
+datos.pc = prcomp(datos_no_super[,1:11],scale = FALSE)
+
+#conviene en un biplot ya que tengo las flechas de las variables originales
+ggbiplot(datos.pc, obs.scale=2 ,var.scale=2,alpha=0)
+ggbiplot(datos.pc, obs.scale=2 ,var.scale=2, alpha=0.5,groups = as.factor(datos_no_super$kmeans3) ) +
+  scale_color_manual(name="Cluster kmeans", values=c("orange","cyan","blue","magenta","yellow","black"),
+                     labels=c("grupo 1", "grupo 2","grupo 3","grupo 4","grupo 5","grupo 6")) +  
+theme(legend.direction ="horizontal", legend.position = "top")
+```
+
+```{r}
+#cantidad de registros en cada cluster
+for (i in 1:2) {
+  print(nrow(datos_no_super[datos_no_super$kmeans2 == i,]))
+}
+
+for (i in 1:3) {
+  print(nrow(datos_no_super[datos_no_super$kmeans3 == i,]))
+}
+```
+#------------------------------------------------------------------------
+#Análisis de resultados
+#------------------------------------------------------------------------
+```{r}
+#Para k=2 - Sanos
+datos_no_super[datos_no_super$Category == "sano",] #315
+datos_no_super[datos_no_super$Category == "sano" & datos_no_super$kmeans2 == 2,] 
+datos_no_super[datos_no_super$Category == "sano" & datos_no_super$kmeans2 == 1,] 
+```
+```{r}
+#Para k=2 - No Sanos
+datos_no_super[datos_no_super$Category == "no_sano",] #63
+datos_no_super[datos_no_super$Category == "no_sano" & datos_no_super$kmeans2 == 2,] 
+datos_no_super[datos_no_super$Category == "no_sano" & datos_no_super$kmeans2 == 1,] 
+```
+```{r}
+#Para k=3 - Sanos
+datos_no_super[datos_no_super$Category == "sano",] #315
+datos_no_super[datos_no_super$Category == "sano" & datos_no_super$kmeans3 == 3,] #159
+datos_no_super[datos_no_super$Category == "sano" & datos_no_super$kmeans3 == 2,] #156
+datos_no_super[datos_no_super$Category == "sano" & datos_no_super$kmeans3 == 1,] #17
+```
+```{r}
+#Para k=3 - No Sanos
+datos_no_super[datos_no_super$Category == "no_sano",] #63
+datos_no_super[datos_no_super$Category == "no_sano" & datos_no_super$kmeans3 == 3,] 
+datos_no_super[datos_no_super$Category == "no_sano" & datos_no_super$kmeans3 == 2,] 
+datos_no_super[datos_no_super$Category == "no_sano" & datos_no_super$kmeans3 == 1,] 
+```
+#------------------------------------------------------------------------
+# Método no jerárquico
+#------------------------------------------------------------------------
+```{r echo=TRUE}
+# Matriz de distancias euclídeas 
+
+#datos_no_super[,1:11]
+#datos_no_super[,c("GGT", "AST", "ALP","ALB", "CHOL", "CREA")]
+
+mat_dist <- dist(x = datos_no_super[,1:11], method = "euclidean") 
+
+# Diferentes tipos de algoritmos jerárquicos aplicados: 
+hc_complete <- hclust(d = mat_dist, method = "complete") 
+hc_average  <- hclust(d = mat_dist, method = "average")
+hc_single   <- hclust(d = mat_dist, method = "single")
+hc_ward     <- hclust(d = mat_dist, method = "ward.D2") #el mas usado - metricas del anova.
+
+#calculo del coeficiente de correlacion cofenetico, más cerca de 1 es mejor
+cor(x = mat_dist, cophenetic(hc_complete))
+cor(x = mat_dist, cophenetic(hc_average))
+cor(x = mat_dist, cophenetic(hc_single))
+cor(x = mat_dist, cophenetic(hc_ward))
+```
+```{r echo=TRUE}
+# construccion de un dendograma usando los resultados de la técnica average.
+plot(hc_average )#no se ve bien si hay muchos datos
+rect.hclust(hc_average, k=7, border="red") 
+jer_average<-cutree(hc_average,k=7)  
+datos_no_super$jer_average = jer_average
+```
+```{r}
+for (i in 1:7) {
+  print(nrow(datos_no_super[datos_no_super$jer_average == i,]))
+}
+```
+```{r}
+for (i in 2:7) {
+  print(datos_no_super[datos_no_super$jer_average ==i,])
+}
+```
+```{r}
+datos_no_super[datos_no_super$jer_average == 2 ,]#359
+datos_no_super[datos_no_super$jer_average == 2 & datos_no_super$Category == "sano",] #k=20 303; k=10 315
+datos_no_super[datos_no_super$jer_average == 2 & datos_no_super$Category != "sano",] #k=20 21; k=10 44
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
